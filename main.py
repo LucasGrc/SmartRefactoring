@@ -5,15 +5,16 @@ CLI entry point for the AI-powered code refactoring tool.
 
 Usage examples:
     python main.py refactor src/my_file.py
+    python main.py refactor src/my_file.py --local
     python main.py refactor src/my_file.py --instructions "focus on naming"
-    python main.py refactor src/my_file.py --overwrite
     python main.py batch src/
-    python main.py batch src/ --recursive
+    python main.py batch src/ --recursive --local
     python main.py info src/my_file.py
 """
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -120,11 +121,11 @@ async def _refactor_one(
     file_path: Path,
     extra_instructions: str,
     python_executable: str,
+    use_local: bool,
 ) -> bool:
-    """
-    Run the agent on a single file. Returns True on success, False on failure.
-    """
-    print(f"\n  Refactoring  →  {file_path}")
+    """Run the agent on a single file. Returns True on success, False on failure."""
+    mode = "local" if use_local else "cloud"
+    print(f"\n  Refactoring [{mode}]  →  {file_path}")
     print(f"  {'─' * 54}")
 
     try:
@@ -132,6 +133,7 @@ async def _refactor_one(
             file_path=str(file_path),
             extra_instructions=extra_instructions,
             python_executable=python_executable,
+            use_local=use_local,
         )
         print(report)
         _print_success(f"Done: {file_path.name}")
@@ -160,6 +162,7 @@ async def _cmd_refactor_async(args: argparse.Namespace) -> int:
         file_path=files[0],
         extra_instructions=args.instructions or "",
         python_executable=args.python or sys.executable,
+        use_local=args.local,
     )
     return 0 if success else 1
 
@@ -192,12 +195,13 @@ async def _cmd_batch_async(args: argparse.Namespace) -> int:
             file_path=file_path,
             extra_instructions=args.instructions or "",
             python_executable=args.python or sys.executable,
+            use_local=args.local,
         )
         results[str(file_path)] = ok
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    passed  = sum(1 for v in results.values() if v)
-    failed  = len(results) - passed
+    passed = sum(1 for v in results.values() if v)
+    failed = len(results) - passed
 
     print(f"\n{'═' * 60}")
     print(f"  Batch complete: {passed} succeeded / {failed} failed")
@@ -221,22 +225,57 @@ def cmd_batch(args: argparse.Namespace) -> int:
 # CLI definition
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _add_common_args(parser: argparse.ArgumentParser) -> None:
+    """Add flags shared by both refactor and batch subcommands."""
+    parser.add_argument(
+        "--instructions", "-i",
+        metavar="TEXT",
+        default="",
+        help="Extra instructions passed to the model (e.g. 'focus on naming').",
+    )
+    parser.add_argument(
+        "--python",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Python interpreter used to launch the MCP server "
+            "(default: current interpreter, i.e. your venv's python)."
+        ),
+    )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        default=False,
+        help=(
+            "Use a local Ollama model instead of the Claude API. "
+            "Requires Ollama running: ollama serve"
+        ),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="refactor",
         description=(
             "AI-powered code refactoring tool.\n"
             "Applies SOLID principles and Clean Code practices to Python, "
-            "Java, and JavaScript/TypeScript files using Claude + MCP."
+            "Java, and JavaScript/TypeScript files.\n"
+            "Supports Claude API (cloud) and Ollama (local) modes."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
+  # Cloud mode (Claude API — requires ANTHROPIC_API_KEY)
   python main.py refactor src/app.py
-  python main.py refactor src/app.py --instructions "focus on naming conventions"
-  python main.py refactor src/Service.java --python /usr/bin/python3
-  python main.py batch src/
-  python main.py batch src/ --recursive --instructions "apply DRY aggressively"
+  python main.py refactor src/app.py --instructions "focus on naming"
+  python main.py batch src/ --recursive
+
+  # Local mode (Ollama — free, no API key needed)
+  python main.py refactor src/app.py --local
+  python main.py refactor src/Service.java --local --instructions "apply DRY"
+  python main.py batch src/ --local --recursive
+
+  # Utilities
   python main.py info src/app.py
         """,
     )
@@ -252,21 +291,7 @@ examples:
         "path",
         help="Path to the source file to refactor.",
     )
-    p_refactor.add_argument(
-        "--instructions", "-i",
-        metavar="TEXT",
-        default="",
-        help="Extra instructions passed to Claude (e.g. 'focus on naming').",
-    )
-    p_refactor.add_argument(
-        "--python",
-        metavar="PATH",
-        default=None,
-        help=(
-            "Python interpreter used to launch the MCP server "
-            "(default: current interpreter, i.e. your venv's python)."
-        ),
-    )
+    _add_common_args(p_refactor)
     p_refactor.set_defaults(func=cmd_refactor)
 
     # ── batch ─────────────────────────────────────────────────────────────────
@@ -284,18 +309,7 @@ examples:
         default=False,
         help="Scan sub-directories recursively.",
     )
-    p_batch.add_argument(
-        "--instructions", "-i",
-        metavar="TEXT",
-        default="",
-        help="Extra instructions applied to every file in the batch.",
-    )
-    p_batch.add_argument(
-        "--python",
-        metavar="PATH",
-        default=None,
-        help="Python interpreter used to launch the MCP server.",
-    )
+    _add_common_args(p_batch)
     p_batch.set_defaults(func=cmd_batch)
 
     # ── info ──────────────────────────────────────────────────────────────────
@@ -320,15 +334,17 @@ def main() -> None:
     parser = build_parser()
     args   = parser.parse_args()
 
-    # ANTHROPIC_API_KEY check — fail fast with a clear message
-    import os
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        _print_error(
-            "ANTHROPIC_API_KEY environment variable is not set.\n"
-            "  Export it before running:\n"
-            "  export ANTHROPIC_API_KEY=sk-ant-..."
-        )
-        sys.exit(1)
+    # API key is only required for cloud mode
+    if hasattr(args, "local") and not args.local:
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            _print_error(
+                "ANTHROPIC_API_KEY environment variable is not set.\n"
+                "  Export it before running:\n"
+                "    export ANTHROPIC_API_KEY=sk-ant-...\n"
+                "  Or use local mode (free, no key needed):\n"
+                "    python main.py refactor <file> --local"
+            )
+            sys.exit(1)
 
     sys.exit(args.func(args))
 

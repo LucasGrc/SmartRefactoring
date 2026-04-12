@@ -1,6 +1,6 @@
 # AI Code Refactorer
 
-An AI-powered CLI tool that automatically refactors Python, Java, and JavaScript source files by applying **SOLID principles** and **Clean Code** best practices — powered by Claude and the Model Context Protocol (MCP).
+An AI-powered CLI tool that automatically refactors Python, Java, and JavaScript source files by applying **SOLID principles** and **Clean Code** best practices — powered by Claude (cloud), Ollama (local), and the Model Context Protocol (MCP).
 
 ---
 
@@ -13,7 +13,7 @@ Input file (.py / .java / .js)
         ↓
   MCP Server  (reads & writes files)
         ↓
-  Claude API  (analyses + refactors)
+  Claude API / Ollama (analyses + refactors)
         ↓
   Refactored output file + report
 ```
@@ -28,7 +28,8 @@ The tool spawns a local MCP server that exposes file I/O tools to Claude. Claude
 |---|---|
 | Python | 3.10 or higher |
 | pip | latest |
-| Anthropic API key | required |
+| Anthropic API key | required for cloud mode |
+| Ollama | required for local mode |
 
 ---
 
@@ -58,7 +59,7 @@ source .venv/bin/activate
 ### 3. Install dependencies
 
 ```bash
-pip install anthropic "mcp[cli]" uv
+pip install anthropic openai "mcp[cli]" uv
 ```
 
 ### 4. Set your Anthropic API key
@@ -77,6 +78,42 @@ $env:ANTHROPIC_API_KEY="sk-ant-your-key-here"
 > Get your API key at [console.anthropic.com](https://console.anthropic.com).  
 > New accounts receive a small free credit to get started.  
 > To make the key permanent, add the export line to your `~/.bashrc` or `~/.zshrc`.
+
+### 5. Setup Ollama (Local mode)
+
+#### How to use it
+
+Install the extra dependency for local mode:
+```bash
+pip install openai
+```
+
+Pull a model (one time):
+```bash
+ollama pull qwen2.5-coder:14b
+```
+
+Start Ollama (keep this running in a separate terminal):
+```bash
+ollama serve
+```
+
+Run in local mode — free, no API key needed:
+```bash
+python main.py refactor examples/BadCode.java --local
+python main.py batch src/ --recursive --local
+```
+
+Cloud mode still works exactly as before:
+```bash
+python main.py refactor examples/BadCode.java
+```
+
+To switch the local model, just change `LOCAL_MODEL` at the top of `agent.py`:
+```python
+LOCAL_MODEL = "qwen2.5-coder:7b"   # lighter, faster
+LOCAL_MODEL = "qwen2.5-coder:32b"  # heavier, better quality
+```
 
 ---
 
